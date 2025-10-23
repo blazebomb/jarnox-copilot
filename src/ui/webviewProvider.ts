@@ -49,6 +49,53 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
   }
   
   /**
+   * PREVIEW HANDLER
+   * ===============
+   * 
+   * Generates a response without applying it to the editor and
+   * returns the raw output to the webview for display.
+   * 
+   * @param userPrompt - Prompt typed by the user
+   * @param modelName - Selected AI model
+   * @param webview - Webview to deliver the preview data to
+   */
+  private async handlePreviewPrompt(
+    userPrompt: string,
+    modelName: string,
+    webview: vscode.Webview
+  ): Promise<void> {
+    
+    // Validate input
+    if (!userPrompt?.trim()) {
+      vscode.window.showWarningMessage('Please enter a prompt before applying.');
+      return;
+    }
+    
+    const normalizedPrompt = userPrompt.trim();
+    console.log(`Previewing prompt with model ${modelName}:`, normalizedPrompt);
+    
+    vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `Generating preview with ${modelName}...`,
+      cancellable: false
+    }, async () => {
+      try {
+        const aiResponse = await generateResponseForUser(normalizedPrompt, modelName);
+        console.log('Received AI preview response:', aiResponse);
+        
+        webview.postMessage({
+          type: 'preview',
+          text: this.summarizeResponse(aiResponse),
+          rawResponse: aiResponse
+        });
+      } catch (error) {
+        console.error('Error generating preview response:', error);
+        vscode.window.showErrorMessage(this.formatErrorMessage(error));
+      }
+    });
+  }
+  
+  /**
    * WEBVIEW VIEW RESOLVER
    * =====================
    * 
@@ -98,6 +145,8 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
         // Handle "apply" messages (when user submits a prompt)
         if (message.type === 'apply') {
           await this.handleUserPrompt(message.text, message.model, webview);
+        } else if (message.type === 'preview') {
+          await this.handlePreviewPrompt(message.text, message.model, webview);
         } else {
           console.log('Unknown message type:', message.type);
         }
@@ -136,7 +185,8 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       return;
     }
     
-    console.log(`Processing prompt with model ${modelName}:`, userPrompt);
+    const normalizedPrompt = userPrompt.trim();
+    console.log(`Processing prompt with model ${modelName}:`, normalizedPrompt);
     
     // Show progress notification
     vscode.window.withProgress({
@@ -147,7 +197,7 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       
       try {
         // Send prompt to AI model and get response
-        const aiResponse = await generateResponseForUser(userPrompt, modelName);
+        const aiResponse = await generateResponseForUser(normalizedPrompt, modelName);
         console.log('Received AI response:', aiResponse);
         
         // Try to parse as a model action first
@@ -161,7 +211,8 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
           // Notify webview about the action
           webview.postMessage({
             type: 'applied',
-            text: `Action: ${modelAction.action} ${modelAction.path || '(current editor)'}`
+            text: `Action: ${modelAction.action} ${modelAction.path || '(current editor)'}`,
+            rawResponse: aiResponse
           });
           
         } else {
@@ -172,24 +223,14 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
           // Notify webview about the insertion
           webview.postMessage({
             type: 'applied',
-            text: this.summarizeResponse(aiResponse)
+            text: this.summarizeResponse(aiResponse),
+            rawResponse: aiResponse
           });
         }
         
       } catch (error) {
         console.error('Error processing user prompt:', error);
-        
-        // Show user-friendly error message
-        let errorMessage = 'Failed to generate response';
-        if (error instanceof Error) {
-          if (error.message.includes('connect')) {
-            errorMessage = 'Cannot connect to AI server. Check if Ollama is running.';
-          } else {
-            errorMessage = error.message;
-          }
-        }
-        
-        vscode.window.showErrorMessage(errorMessage);
+        vscode.window.showErrorMessage(this.formatErrorMessage(error));
       }
     });
   }
@@ -245,6 +286,25 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
     return cleaned.length > 50 
       ? cleaned.substring(0, 47) + '...'
       : cleaned;
+  }
+  
+  /**
+   * ERROR MESSAGE FORMATTER
+   * =======================
+   * 
+   * Produces a user-friendly message from an unknown error object.
+   * 
+   * @param error - Error thrown during processing
+   * @returns Message safe to display
+   */
+  private formatErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      if (error.message.includes('connect')) {
+        return 'Cannot connect to AI server. Check if Ollama is running.';
+      }
+      return error.message;
+    }
+    return 'Failed to generate response';
   }
   
   /**
@@ -359,6 +419,10 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       gap: 8px; 
       align-items: center; 
     }
+    
+    .row.actions {
+      align-items: stretch;
+    }
 
     /* Input field styling */
     input[type="text"] {
@@ -401,6 +465,15 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       width: 100%;
       font-size: 14px;
     }
+    
+    button.secondary {
+      background: #3a3a3a;
+      color: var(--text-color);
+    }
+
+    button.secondary:hover {
+      background: #4a4a4a;
+    }
 
     /* Voice recording button */
     /* Help text styling */
@@ -415,6 +488,39 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       font-size: 11px;
       color: var(--muted-text);
       min-height: 16px;
+    }
+
+    /* Response display */
+    .response-container {
+      margin-top: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .response-container[hidden] {
+      display: none;
+    }
+
+    .response-header {
+      font-size: 12px;
+      color: var(--muted-text);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .response-content {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 160px;
+      overflow-y: auto;
     }
 
     /* Activity log styling */
@@ -456,13 +562,20 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       </div>
 
       <!-- Input row with text box and apply button -->
-      <div class="row">
+      <div class="row actions">
         <input id="promptInput" type="text" placeholder="Type your prompt (e.g., 'create a function to add two numbers')..." />
-        <button id="applyButton">Apply</button>
+        <button id="applyEditorButton">Apply to Editor</button>
+        <button id="previewButton" class="secondary">Apply (Show Raw)</button>
       </div>
 
       <!-- Status message -->
       <div class="status-message" id="statusMessage"></div>
+
+      <!-- Latest response display -->
+      <div class="response-container" id="responseContainer" hidden>
+        <div class="response-header">Latest Response</div>
+        <pre id="responseContent" class="response-content"></pre>
+      </div>
 
       <!-- Help text -->
       <div class="help-text">
@@ -479,12 +592,16 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
     // Get references to UI elements
     const promptInput = document.getElementById('promptInput');
     const modelSelect = document.getElementById('modelSelect');
-    const applyButton = document.getElementById('applyButton');
+    const applyEditorButton = document.getElementById('applyEditorButton');
+    const previewButton = document.getElementById('previewButton');
     const statusMessage = document.getElementById('statusMessage');
+    const responseContainer = document.getElementById('responseContainer');
+    const responseContent = document.getElementById('responseContent');
     const activityLog = document.getElementById('activityLog');
     
     // VS Code API for communicating with the extension
     const vscode = acquireVsCodeApi();
+    let lastResponse = '';
     
     /**
      * STATUS UPDATER
@@ -507,7 +624,7 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
      * 
      * Sends the user's prompt and selected model to the extension for processing.
      */
-    function submitPrompt() {
+    function submitPrompt(target = 'apply') {
       const promptText = promptInput.value.trim();
       const selectedModel = modelSelect.value;
       
@@ -515,18 +632,38 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
         updateStatus('Please enter a prompt first');
         return;
       }
+
+      const requestType = target === 'preview' ? 'preview' : 'apply';
+
+      // Reset previous response display
+      lastResponse = '';
+      if (responseContainer && responseContent) {
+        if (requestType === 'preview') {
+          responseContainer.hidden = false;
+          responseContent.textContent = 'Waiting for response...';
+        } else {
+          responseContainer.hidden = true;
+          responseContent.textContent = '';
+        }
+      }
       
       // Send message to extension
       vscode.postMessage({
-        type: 'apply',
+        type: requestType,
         text: promptText,
         model: selectedModel
       });
       
       // Clear input and show feedback
       promptInput.value = '';
-      logActivity('Sent: ' + promptText.substring(0, 40) + '...');
-      updateStatus('Processing with ' + selectedModel + '...');
+      const truncatedPrompt = promptText.substring(0, 40) + '...';
+      if (requestType === 'preview') {
+        logActivity('Preview requested: ' + truncatedPrompt);
+        updateStatus('Generating preview with ' + selectedModel + '...');
+      } else {
+        logActivity('Apply requested: ' + truncatedPrompt);
+        updateStatus('Processing with ' + selectedModel + '...');
+      }
     }
     
     /**
@@ -546,14 +683,21 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
     // EVENT LISTENERS
     // ===============
     
-    // Apply button click
-    applyButton.addEventListener('click', submitPrompt);
+    // Apply to editor button click
+    if (applyEditorButton) {
+      applyEditorButton.addEventListener('click', () => submitPrompt('apply'));
+    }
+    
+    // Apply to webview (preview) button click
+    if (previewButton) {
+      previewButton.addEventListener('click', () => submitPrompt('preview'));
+    }
     
     // Enter key in text input
     promptInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        submitPrompt();
+        submitPrompt('apply');
       }
     });
     
@@ -562,8 +706,50 @@ export class CopilotWebviewProvider implements vscode.WebviewViewProvider {
       const message = event.data;
       
       if (message.type === 'applied') {
-        logActivity('Applied: ' + message.text);
+        const appliedSummary = typeof message.text === 'string' && message.text.trim()
+          ? message.text
+          : 'Response applied';
+        logActivity('Applied: ' + appliedSummary);
         updateStatus('Completed successfully');
+        
+        if (typeof message.rawResponse === 'string') {
+          lastResponse = message.rawResponse;
+          if (responseContainer && !responseContainer.hidden && responseContent) {
+            responseContent.textContent = lastResponse;
+          }
+        } else {
+          lastResponse = '';
+          if (responseContainer) {
+            responseContainer.hidden = true;
+          }
+          if (responseContent) {
+            responseContent.textContent = '';
+          }
+        }
+      } else if (message.type === 'preview') {
+        const previewSummary = typeof message.text === 'string' && message.text.trim()
+          ? message.text
+          : 'Raw response ready';
+        logActivity('Preview ready: ' + previewSummary);
+        updateStatus('Preview ready');
+        
+        if (typeof message.rawResponse === 'string') {
+          lastResponse = message.rawResponse;
+          if (responseContainer) {
+            responseContainer.hidden = false;
+          }
+          if (responseContent) {
+            responseContent.textContent = lastResponse;
+          }
+        } else {
+          lastResponse = '';
+          if (responseContainer) {
+            responseContainer.hidden = false;
+          }
+          if (responseContent) {
+            responseContent.textContent = 'No preview available.';
+          }
+        }
       }
     });
     

@@ -1,39 +1,49 @@
-# JarNox Command Copilot Documentation
+# JarNox Command Copilot – Docs Overview
 
-This VS Code extension helps you write code using AI. You type what you want, and it generates code for you.
+These docs give developers and advanced users a deeper look at how the JarNox Command Copilot extension is put together and how the pieces interact. If you are just trying the extension for the first time, start with the root `README.md`; if you are building features or debugging, this folder is for you.
 
-## What is this?
+## Feature Snapshot
 
-This extension adds a panel to VS Code where you can:
-- Ask AI to write code
-- Choose different AI models
-- Insert code directly into your files
+- Copilot-style sidebar living in the Explorer view
+- Prompt input with “Preview” (view result in panel) and “Apply” (insert into editor) flows
+- Model picker with several Ollama-compatible options
+- Activity log and status line so users can see what happened
+- Experimental file actions triggered by structured JSON coming back from the model
 
-## Files in this project
+## Source Layout
 
-### Main code files (src folder)
-- `main.ts` - Starts the extension when VS Code opens
-- `webviewProvider.ts` - Creates the sidebar panel with buttons and input box
-- `llmService.ts` - Talks to the AI server to get code
-- `modelActions.ts` - Puts the generated code into your files
-- `textProcessor.ts` - Cleans up the AI response text
+The TypeScript code is intentionally modular so that UI, AI, and VS Code glue stay separate:
 
-### Test files
-- `pure-helpers.test.ts` - Tests if the code works correctly
+| File | Purpose |
+| ---- | ------- |
+| `src/extension.ts` | Re-exports the modular pieces for backwards compatibility with tests and VS Code entry points. |
+| `src/main.ts` | Registers the sidebar view and the `JarNox: Show Command Copilot` command. Handles activation lifecycle. |
+| `src/ui/webviewProvider.ts` | Builds the sidebar HTML, wires up preview/apply buttons, model selector, log, and response display. |
+| `src/services/llmService.ts` | Handles prompt construction and all HTTP calls to Ollama (defaults to `http://72.60.98.171:11434`). |
+| `src/services/modelActions.ts` | Parses JSON responses into create/append/insert actions and executes them safely. |
+| `src/utils/textProcessor.ts` | Comment stripping, code fence handling, and cursor insertion helpers. |
 
-### Config files
-- `package.json` - Extension settings and requirements
-- `tsconfig.json` - How to compile TypeScript
+Unit tests (`src/test/pure-helpers.test.ts`) focus on the pure helpers re-exported through `extension.ts` to avoid bootstrapping VS Code during test runs.
 
-## Documentation files
-- `USAGE.md` - How to use the extension
-- `CHALLENGES.md` - Known problems and solutions
+## Data Flow Basics
 
-## How it works
+1. User launches the sidebar and submits a prompt (preview or apply).
+2. `webviewProvider` forwards the request to the extension host via `postMessage`.
+3. The message handler normalizes the prompt, calls `generateResponseForUser` with the selected model, and awaits the result.
+4. The response is cleaned with `unwrapCodeFence`/`stripComments` and either posted back to the webview (preview) or written into the active editor (apply). For JSON actions we delegate to `modelActions` instead.
+5. The webview updates its activity log, status label, and (for preview) the response display.
 
-1. You type what code you want
-2. Extension sends your request to AI server
-3. AI writes the code
-4. Extension puts the code in your file
+## Tests and Tooling
 
-The AI server runs on `http://72.60.98.171:11434` by default.
+- `npm run compile` – build TypeScript once (runs before launch/debug).
+- `npm run watch` – continuously build while editing.
+- `npm test` – mocha suite covering helper utilities and JSON parsing logic.
+
+Future automated tests can hook into VS Code’s integration harness (`@vscode/test-electron`) if UI-level coverage is needed.
+
+## Documentation Set
+
+- `USAGE.md` – end-user walkthrough with screenshots cues and tips.
+- `CHALLENGES.md` – list of current limitations, workarounds, and ideas for contributors.
+
+Keep these docs updated when you change the UI flow, adjust the default LLM configuration, or add/remove model capabilities. Consistency between this folder and the root README helps new contributors ramp up quickly. Feel free to add new pages (e.g., architecture decisions or troubleshooting guides) as the project evolves.
