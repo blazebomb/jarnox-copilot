@@ -2,7 +2,7 @@
   "name": "jarnox-command-copilot-demo",
   "displayName": "JarNox Command Copilot (Demo)",
   "description": "A Copilot-style sidebar panel demo that inserts text into the editor (optionally as a comment).",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "jarnox",
   "engines": {
     "vscode": "^1.84.0"
